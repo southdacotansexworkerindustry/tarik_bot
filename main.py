@@ -1,26 +1,40 @@
 import asyncio
 import re
 from pathlib import Path
+
 from playwright.async_api import async_playwright
 
 from pop_users import collect_usernames_from_group
 from image_recognition import is_gift
+from config import CFG
 
-USERS_FILE = "users.txt"
 
-# === Config (was in config.py) ===
-BASE_DIR = Path(__file__).resolve().parent
-SHOTS_DIR = BASE_DIR / "shots"       # where screenshots will be saved
-GIFTS_REF = BASE_DIR / "gifts_ref"   # folder with reference gift images
+# ensure USERS_FILE is defined (use your config or default)
+USERS_FILE = Path(CFG.get("USERS_FILE", "users.txt"))
 
-SHOTS_DIR.mkdir(parents=True, exist_ok=True)
-GIFTS_REF.mkdir(parents=True, exist_ok=True)
+# ensure SHOTS_DIR exists
+shots_dir = Path(CFG.get("SHOTS_DIR", "shots"))
+shots_dir.mkdir(parents=True, exist_ok=True)
+CFG["SHOTS_DIR"] = shots_dir
 
-CFG = {
-    "BASE_DIR": BASE_DIR,
-    "SHOTS_DIR": SHOTS_DIR,
-    "GIFTS_REF": GIFTS_REF,
-}
+
+async def highlight_bypass(page):
+    """
+    Wait until Telegram's search widget (div.input-search > input.input-search-input)
+    appears in the page — used as a reliable sign that login/verification completed.
+    This will wait indefinitely until the selector is visible.
+    """
+    selector = "div.input-search input.input-search-input"
+    print("\n⏸ Waiting for Telegram login/verification to complete...")
+    print("   -> Please complete login/verification manually in the opened browser.")
+    print("   -> The script will continue automatically once the search bar appears.\n")
+
+    # Wait forever (timeout=0) until the search input is visible
+    await page.wait_for_selector(selector, state="visible", timeout=0)
+
+    # small pause to allow UI to settle
+    await asyncio.sleep(0.5)
+    print("✅ Search bar detected — login/verification complete, continuing...")
 
 
 async def process_user(page, username: str):
@@ -31,9 +45,12 @@ async def process_user(page, username: str):
     uname = username if username.startswith("@") else "@" + username
     print(f"\n🔍 Searching for {uname}")
 
-    # Focus search box
-    await page.click("aside input[placeholder*='earch']")
-    await page.fill("aside input[placeholder*='earch']", uname)
+    # Use new search widget selector
+    search_selector = "div.input-search input.input-search-input"
+    await page.wait_for_selector(search_selector, timeout=30000)
+    search_input = page.locator(search_selector).first
+    await search_input.click()
+    await search_input.fill(uname)
     await page.keyboard.press("Enter")
     await page.wait_for_timeout(1500)
 
@@ -63,7 +80,8 @@ async def process_user(page, username: str):
     for i in range(count):
         safe_name = re.sub(r"[^a-zA-Z0-9]", "_", uname)
         path = CFG["SHOTS_DIR"] / f"{safe_name}_gift_{i}.png"
-        await gift_images.nth(i).screenshot(path=path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        await gift_images.nth(i).screenshot(path=str(path))
 
         if is_gift(str(path)):
             print(f"🎁 Gift match detected in {uname}'s Gifts tab (image {i})")
@@ -76,20 +94,22 @@ async def process_user(page, username: str):
 
 
 async def main():
-    """
-    Phase 1: Collect usernames from a Telegram group into users.txt
-    Phase 2: Visit each user profile and check gifts against gifts_ref
-    """
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=False)
         page = await browser.new_page()
 
+        # Go to Telegram Web
+        await page.goto("https://web.telegram.org/k/")
+
+        # Pause until user finishes login/verification
+        await highlight_bypass(page)
+
         # === Phase 1: Collect usernames ===
-        group_name = "Test Group"   # 🔹 change to your target group name
+        group_name = "Test Group"   # 🔹 change this to your real target group
         await collect_usernames_from_group(page, group_name)
 
         # Load usernames from file
-        if not Path(USERS_FILE).exists():
+        if not USERS_FILE.exists():
             print("⚠️ No users.txt found after Phase 1")
             await browser.close()
             return
