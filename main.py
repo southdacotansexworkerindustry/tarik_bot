@@ -1,40 +1,49 @@
 import asyncio
 import re
 from pathlib import Path
-
 from playwright.async_api import async_playwright
 
 from pop_users import collect_usernames_from_group
 from image_recognition import is_gift
 from config import CFG
 
-
-# ensure USERS_FILE is defined (use your config or default)
+# === Users file and directories ===
 USERS_FILE = Path(CFG.get("USERS_FILE", "users.txt"))
 
-# ensure SHOTS_DIR exists
+# Ensure SHOTS_DIR exists
 shots_dir = Path(CFG.get("SHOTS_DIR", "shots"))
 shots_dir.mkdir(parents=True, exist_ok=True)
 CFG["SHOTS_DIR"] = shots_dir
 
+# Ensure GIFTS_REF exists
+gifts_ref = Path(CFG.get("GIFTS_REF", "gifts_ref"))
+gifts_ref.mkdir(parents=True, exist_ok=True)
+CFG["GIFTS_REF"] = gifts_ref
+
 
 async def highlight_bypass(page):
     """
-    Wait until Telegram's search widget (div.input-search > input.input-search-input)
-    appears in the page — used as a reliable sign that login/verification completed.
-    This will wait indefinitely until the selector is visible.
+    Wait until Telegram's search widget appears.
     """
     selector = "div.input-search input.input-search-input"
     print("\n⏸ Waiting for Telegram login/verification to complete...")
     print("   -> Please complete login/verification manually in the opened browser.")
     print("   -> The script will continue automatically once the search bar appears.\n")
 
-    # Wait forever (timeout=0) until the search input is visible
     await page.wait_for_selector(selector, state="visible", timeout=0)
-
-    # small pause to allow UI to settle
     await asyncio.sleep(0.5)
     print("✅ Search bar detected — login/verification complete, continuing...")
+
+
+async def click_first_group(page, group_name: str) -> str:
+    """
+    Find and click the first chat group by its displayed name.
+    """
+    group = page.locator(f"span.peer-title-inner:has-text('{group_name}')").first
+    await group.wait_for(state="visible", timeout=30000)
+    await group.click()
+    print(f"✅ Entered group: {group_name}")
+    return group_name
 
 
 async def process_user(page, username: str):
@@ -45,12 +54,9 @@ async def process_user(page, username: str):
     uname = username if username.startswith("@") else "@" + username
     print(f"\n🔍 Searching for {uname}")
 
-    # Use new search widget selector
-    search_selector = "div.input-search input.input-search-input"
-    await page.wait_for_selector(search_selector, timeout=30000)
-    search_input = page.locator(search_selector).first
-    await search_input.click()
-    await search_input.fill(uname)
+    # Focus search bar
+    await page.click("input.input-search-input")
+    await page.fill("input.input-search-input", uname)
     await page.keyboard.press("Enter")
     await page.wait_for_timeout(1500)
 
@@ -63,7 +69,7 @@ async def process_user(page, username: str):
     await page.wait_for_timeout(2000)
 
     # === Open Gifts tab ===
-    gifts_tab = page.locator("text=Gifts, text=Подарки").first
+    gifts_tab = page.locator("div.menu-horizontal-div-item", has_text="Gifts").first
     if await gifts_tab.is_visible():
         await gifts_tab.click()
         await page.wait_for_timeout(1500)
@@ -98,15 +104,18 @@ async def main():
         browser = await pw.chromium.launch(headless=False)
         page = await browser.new_page()
 
-        # Go to Telegram Web
+        # Open Telegram Web
         await page.goto("https://web.telegram.org/k/")
 
         # Pause until user finishes login/verification
         await highlight_bypass(page)
 
-        # === Phase 1: Collect usernames ===
-        group_name = "Test Group"   # 🔹 change this to your real target group
-        await collect_usernames_from_group(page, group_name)
+        # === Phase 1: Enter the group ===
+        target_group = "ТРУСЫ РАЙЗА"   # 🔹 change to your real group name
+        await click_first_group(page, target_group)
+
+        # Collect usernames from the group
+        await collect_usernames_from_group(page, target_group)
 
         # Load usernames from file
         if not USERS_FILE.exists():
