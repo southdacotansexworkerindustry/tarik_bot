@@ -34,3 +34,35 @@ tarik_bot/
 - Playwright (`pip install playwright`)  
 - OpenCV (`pip install opencv-contrib-python`)  
 - FS-extra, pathlib (standard in Python 3.12+)  
+
+main.py
+│
+├─> Launch Playwright browser
+│
+├─> Open Telegram Web (https://web.telegram.org/k/)
+│      │
+│      └─> Wait for user to complete login/verification
+│
+├─> Click first group (pop_users.click_first_group)
+│      │
+│      └─> Finds group by name in chat list
+│
+├─> Open Gifts tab (pop_users.open_group_gifts)
+│      │
+│      └─> Clicks group header → opens side panel → selects Gifts tab
+│
+├─> Load usernames from users.txt
+│
+└─> For each username:
+       │
+       └─> process_user(page, username)
+              │
+              ├─> Search user in Telegram search bar
+              │
+              ├─> Click user profile
+              │
+              ├─> Open Gifts tab (already done via side panel)
+              │
+              ├─> Take screenshots of all gift images
+              │
+              └─> Check each screenshot against gifts_ref folder using image_recognition.is_gift
